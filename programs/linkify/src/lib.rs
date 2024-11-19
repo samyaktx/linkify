@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("53Yz1VtkvMmp3ASE6gcL1dYBQAvXHTAvUJzHEFL8icgM");
+declare_id!("GsMY2V7Mz1utVJw3V2f1c3PAPoraiiDZeqWnnSU5AXbi");
 
 #[program]
 pub mod linkify {
