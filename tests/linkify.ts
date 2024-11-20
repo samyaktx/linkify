@@ -26,7 +26,7 @@ describe("linkify", () => {
   it("Create user", async () => {
     // Add your test here.
 
-    const user_prvt = JSON.parse(process.env.PRIVATE_KEY_USER2!);
+    const user_prvt = JSON.parse(process.env.PRIVATE_KEY_USER1!);
     const user_1 = anchor.web3.Keypair.fromSecretKey(Uint8Array.from(user_prvt));
     const user_1_name = "krsnax";
       
@@ -37,13 +37,7 @@ describe("linkify", () => {
       program.programId
     );
     
-    const data = await anchor.getProvider().connection.getAccountInfo(userAccount);
-    // user PDA account is giving `null` raw data
-    console.log("User PDA data:", data);
-
-    // but here user PDA account is generating, how?
     console.log("Derived User Account:", userAccount.toBase58());
-
     console.log("Program ID:", program.programId.toBase58());
     console.log("User Public Key:", user_1.publicKey.toBase58());
 

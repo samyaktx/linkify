@@ -22,7 +22,7 @@ pub struct CreateUser<'info> {
    #[account(
         init,
         payer = signer,
-        space = 8 + 32 + 4 + 4,
+        space = 8 + 32 + UserInfo::INIT_SPACE + 4 + 4,
         seeds = [b"user", signer.key().as_ref()],
         bump
     )]
