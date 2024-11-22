@@ -5,7 +5,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-linkify = "GsMY2V7Mz1utVJw3V2f1c3PAPoraiiDZeqWnnSU5AXbi"
+linkify = "gmMaMu6yguyX8HMWmfDRkkXe8iDSiRNvXv75QvwyBRR"
 
 [registry]
 url = "https://api.apr.dev"
