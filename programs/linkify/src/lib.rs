@@ -21,6 +21,20 @@ pub mod linkify {
     // endregion:   --- Create User Function
 
 
+    // region:   --- Update Username Function
+
+    pub fn update_username(ctx: Context<UpdateUsername>, user_pubkey: Pubkey, username: String) -> Result<()> {
+        let user_key = &ctx.accounts.user_info.user_pubkey;
+
+        require!(user_key != &user_pubkey, Error::InvaildUserPubkey);
+        let change_username = &mut ctx.accounts.user_info;
+        change_username.username = username;
+        Ok(())
+    }
+
+    // endregion:   --- Update Username Function
+
+
     // region:   --- Request Connection Function
 
     pub fn request_connection(ctx: Context<RequestConnection>, acceptor_pubkey: Pubkey) -> Result<()> {
@@ -119,7 +133,7 @@ pub mod linkify {
         Ok(())
     }
 
-    // region:   --- Reject Connection Function
+    // endregion:   --- Reject Connection Function
 
     // @TODO
     // withdraw stake
@@ -143,6 +157,24 @@ pub struct CreateUser<'info> {
 }
 
 // endregion:   --- Create User Instruction
+
+
+// region:   --- Update Username Instruction
+
+#[derive(Accounts)]
+pub struct UpdateUsername<'info> {
+   #[account(
+        mut,
+        seeds = [b"user", signer.key().as_ref()],
+        bump
+    )]
+    pub user_info: Account<'info, UserInfo>,
+    #[account(mut)]
+    pub signer: Signer<'info>,
+}
+
+// endregion:   --- Update Username Instruction
+
 
 
 // region:   --- Request Connection Instruction
@@ -277,6 +309,8 @@ pub struct Connection {
 
 #[error_code]
 pub enum Error {
+    #[msg("Invaild or Wrong user pubkey")]
+    InvaildUserPubkey,
     #[msg("Invaild or Wrong Acceptor pubkey")]
     InvaildAcceptorPubkey,
     #[msg("Requester and Acceptor accounts cannot be the same.")]
