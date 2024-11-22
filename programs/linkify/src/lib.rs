@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::native_token::LAMPORTS_PER_SOL;
 
 declare_id!("gmMaMu6yguyX8HMWmfDRkkXe8iDSiRNvXv75QvwyBRR");
 
@@ -12,18 +13,21 @@ pub mod linkify {
         let user_info = &mut ctx.accounts.user_info;
         user_info.username = username;
         user_info.user_pubkey = ctx.accounts.signer.key();
-        user_info.req_sent_count = 0;
+        user_info.req_received_count = 0;
         user_info.req_checked_count = 0;
-        
+
         Ok(())
     }
 
     // endregion:   --- Create User Function
 
-
     // region:   --- Update Username Function
 
-    pub fn update_username(ctx: Context<UpdateUsername>, user_pubkey: Pubkey, username: String) -> Result<()> {
+    pub fn update_username(
+        ctx: Context<UpdateUsername>,
+        user_pubkey: Pubkey,
+        username: String,
+    ) -> Result<()> {
         let user_key = &ctx.accounts.user_info.user_pubkey;
 
         require!(user_key != &user_pubkey, Error::InvaildUserPubkey);
@@ -33,7 +37,6 @@ pub mod linkify {
     }
 
     // endregion:   --- Update Username Function
-
 
     // region:   --- Request Connection Function
 
@@ -45,17 +48,17 @@ pub mod linkify {
         require!(acceptor_key == requester_key, Error::SameAccountNotAllowed);
 
         let ix = anchor_lang::solana_program::system_instruction::transfer(
-            &ctx.accounts.signer.key(), 
-            &ctx.accounts.program_account.key(), 
-            2_000_000
+            &ctx.accounts.signer.key(),
+            &ctx.accounts.program_account.key(),
+            LAMPORTS_PER_SOL / 10 * 2,
         );
 
         anchor_lang::solana_program::program::invoke(
             &ix,
             &[
                 ctx.accounts.signer.to_account_info(),
-                ctx.accounts.program_account.to_account_info()
-            ]
+                ctx.accounts.program_account.to_account_info(),
+            ],
         )?;
 
         let connection = &mut ctx.accounts.connection;
@@ -63,20 +66,19 @@ pub mod linkify {
         connection.acceptor = *acceptor_key;
         connection.are_connected = false;
 
-        let requester = &mut ctx.accounts.requester_acc;
-        requester.req_sent_count += 1;
+        let acceptor = &mut ctx.accounts.acceptor_acc;
+        acceptor.req_received_count += 1;
 
         Ok(())
     }
 
     // endregion:   --- Request Connection Function
 
-
     // region:   --- Accept Connection Function
 
     pub fn accept_connection(ctx: Context<AcceptConnection>) -> Result<()> {
-        let acceptor_connection = &ctx.accounts.connection.acceptor; 
-        let requester_connection = &ctx.accounts.connection.requester; 
+        let acceptor_connection = &ctx.accounts.connection.acceptor;
+        let requester_connection = &ctx.accounts.connection.requester;
         let acceptor_key = &ctx.accounts.acceptor.user_pubkey;
         let requester_key = &ctx.accounts.requester.user_pubkey;
 
@@ -85,17 +87,17 @@ pub mod linkify {
         require!(acceptor_key == requester_key, Error::SameAccountNotAllowed);
 
         let ix = anchor_lang::solana_program::system_instruction::transfer(
-            &acceptor_key.key(), 
-            &ctx.accounts.program_account.key(), 
-            2_000_000  
+            &acceptor_key.key(),
+            &ctx.accounts.program_account.key(),
+            LAMPORTS_PER_SOL / 10 * 2,
         );
 
         anchor_lang::solana_program::program::invoke(
-            &ix, 
+            &ix,
             &[
                 ctx.accounts.signer.to_account_info(),
-                ctx.accounts.program_account.to_account_info()
-            ]
+                ctx.accounts.program_account.to_account_info(),
+            ],
         )?;
 
         let connecion = &mut ctx.accounts.connection;
@@ -108,13 +110,12 @@ pub mod linkify {
     }
 
     // endregion:   --- Accept Connection Function
-
-
+  
     // region:   --- Reject Connection Function
 
     pub fn reject_connection(ctx: Context<RejectConnection>) -> Result<()> {
-        let acceptor_connection = &ctx.accounts.connection.acceptor; 
-        let requester_connection = &ctx.accounts.connection.requester; 
+        let acceptor_connection = &ctx.accounts.connection.acceptor;
+        let requester_connection = &ctx.accounts.connection.requester;
         let acceptor_key = &ctx.accounts.acceptor.user_pubkey;
         let requester_key = &ctx.accounts.requester.user_pubkey;
 
@@ -123,9 +124,9 @@ pub mod linkify {
         require!(acceptor_key == requester_key, Error::SameAccountNotAllowed);
 
         let program_acc = &ctx.accounts.program_account;
-
-        program_acc.sub_lamports(200_000_000)?;
-        ctx.accounts.requester_pubkey.add_lamports(200_000_000)?;
+ 
+        program_acc.sub_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
+        ctx.accounts.requester_pubkey.add_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
 
         let acceptor = &mut ctx.accounts.acceptor;
         acceptor.req_checked_count += 1;
@@ -135,15 +136,35 @@ pub mod linkify {
 
     // endregion:   --- Reject Connection Function
 
-    // @TODO
-    // withdraw stake
+    // region:   --- Withdraw Stake Function
+
+    pub fn withdraw_stake(ctx: Context<WithdrawStake>, signer: Pubkey) -> Result<()> {
+        let requester_unstaking = &ctx.accounts.requester.user_pubkey;
+        let acceptor_unstaking = &ctx.accounts.acceptor.user_pubkey;
+        let are_connected = &ctx.accounts.connection.are_connected;
+
+        require!(*are_connected == false, Error::AcceptorRequesterAreNotConnected);
+        require!(acceptor_unstaking != &signer || requester_unstaking != &signer, Error::InvaildUserPubkey);
+
+        let program_acc = &ctx.accounts.program_account;
+        
+        program_acc.sub_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
+        ctx.accounts.requester_key.add_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
+
+        program_acc.sub_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
+        ctx.accounts.acceptor_key.add_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
+        
+        Ok(())
+    }
+
+    // endregion:   --- Withdraw Stake Function
 }
 
 // region:   --- Create User Instruction
 
 #[derive(Accounts)]
 pub struct CreateUser<'info> {
-   #[account(
+    #[account(
         init,
         payer = signer,
         space = 8 + 32 + UserInfo::INIT_SPACE + 4 + 4,
@@ -163,7 +184,7 @@ pub struct CreateUser<'info> {
 
 #[derive(Accounts)]
 pub struct UpdateUsername<'info> {
-   #[account(
+    #[account(
         mut,
         seeds = [b"user", signer.key().as_ref()],
         bump
@@ -185,7 +206,7 @@ pub struct RequestConnection<'info> {
         init,
         payer = signer,
         space = 8 + 32 + 32 + 1,
-        seeds = [b"connect", acceptor_acc.user_pubkey.key().as_ref(), &requester_acc.req_sent_count.to_le_bytes()],
+        seeds = [b"connect", acceptor_acc.user_pubkey.key().as_ref(), &acceptor_acc.req_received_count.to_le_bytes()],
         bump
     )]
     pub connection: Account<'info, Connection>,
@@ -205,7 +226,7 @@ pub struct RequestConnection<'info> {
     pub acceptor_acc: Account<'info, UserInfo>,
     #[account(mut)]
     pub program_account: AccountInfo<'info>,
-    pub system_program: Program<'info, System>
+    pub system_program: Program<'info, System>,
 }
 
 // endregion:   --- Request Connection Instruction
@@ -237,7 +258,7 @@ pub struct AcceptConnection<'info> {
     pub requester: Account<'info, UserInfo>,
     #[account(mut)]
     pub program_account: AccountInfo<'info>,
-    pub system_program: Program<'info, System>
+    pub system_program: Program<'info, System>,
 }
 
 // endregion:   --- Accept Connection Instruction
@@ -250,7 +271,7 @@ pub struct RejectConnection<'info> {
     #[account(
         mut,
         close = requester_pubkey,
-        seeds = [b"matched", signer.key().as_ref(), &acceptor.req_checked_count.to_le_bytes()],
+        seeds = [b"connect", signer.key().as_ref(), &acceptor.req_checked_count.to_le_bytes()],
         bump
     )]
     pub connection: Account<'info, Connection>,
@@ -260,7 +281,7 @@ pub struct RejectConnection<'info> {
         seeds = [b"user", signer.key().as_ref()],
         bump
     )]
-    pub acceptor: Account<'info, UserInfo>, 
+    pub acceptor: Account<'info, UserInfo>,
     #[account(
         mut,
         seeds = [b"user", connection.requester.key().as_ref()],
@@ -278,6 +299,42 @@ pub struct RejectConnection<'info> {
 // endregion:   --- Reject Connection Instruction
 
 
+// region:   --- Withdraw Stake Instruction
+
+#[derive(Accounts)]
+pub struct WithdrawStake<'info> {
+    #[account(
+        mut,
+        constraint =  acceptor.user_pubkey.key() == signer.key() || requester.user_pubkey.key() == signer.key(),
+        close = signer,
+    )]
+    pub connection: Account<'info, Connection>,
+    #[account(
+        mut,
+        seeds = [b"user", signer.key().as_ref()],
+        bump
+    )]
+    pub acceptor: Account<'info, UserInfo>,
+    #[account(
+        mut,
+        seeds = [b"user", requester.user_pubkey.key().as_ref()],
+        bump
+    )]
+    pub requester: Account<'info, UserInfo>,
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(mut)]
+    pub requester_key: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub acceptor_key: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub program_account: AccountInfo<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+// endregion:   --- Withdraw Stake Instruction
+
+
 // region:   --- UserInfo Account
 
 #[account]
@@ -286,7 +343,7 @@ pub struct UserInfo {
     pub user_pubkey: Pubkey,
     #[max_len(20)]
     pub username: String,
-    pub req_sent_count: u32,
+    pub req_received_count: u32,
     pub req_checked_count: u32,
 }
 
@@ -299,7 +356,7 @@ pub struct UserInfo {
 pub struct Connection {
     pub requester: Pubkey,
     pub acceptor: Pubkey,
-    pub are_connected: bool
+    pub are_connected: bool,
 }
 
 // endregion:   --- Connection Account
@@ -319,6 +376,8 @@ pub enum Error {
     IncorrectRequesterPubkey,
     #[msg("Acceptor pubkey in UserInfo account is not equal in Connection account")]
     IncorrectAcceptorPubkey,
+    #[msg("Acceptor and Requester are not connected")]
+    AcceptorRequesterAreNotConnected,
 }
 
 // endregion:   --- Error Handling
