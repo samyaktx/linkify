@@ -18,7 +18,7 @@ pub mod linkify {
         Ok(())
     }
 
-    // endregion:   --- Create User
+    // endregion:   --- Create User Function
 
     // region:   --- Request Connection Function
 
@@ -54,8 +54,46 @@ pub mod linkify {
         Ok(())
     }
 
-    // endregion:   --- Request Connection
+    // endregion:   --- Request Connection Function
 
+    pub fn accept_connection(ctx: Context<AcceptConnection>) -> Result<()> {
+        let acceptor_connection = &ctx.accounts.connection.acceptor; 
+        let requester_connection = &ctx.accounts.connection.requester; 
+        let acceptor_key = &ctx.accounts.acceptor.user_pubkey;
+        let requester_key = &ctx.accounts.requester.user_pubkey;
+
+        require!(acceptor_connection != acceptor_key, Error::MissMatchedAcceptorPubkey);
+        require!(requester_connection != requester_key, Error::MissMatchedRequesterPubkey);
+        require!(acceptor_key == requester_key, Error::SameAccountNotAllowed);
+
+        let ix = anchor_lang::solana_program::system_instruction::transfer(
+            &acceptor_key.key(), 
+            &ctx.accounts.program_account.key(), 
+            2_000_000  
+        );
+
+        anchor_lang::solana_program::program::invoke(
+            &ix, 
+            &[
+                ctx.accounts.signer.to_account_info(),
+                ctx.accounts.program_account.to_account_info()
+            ]
+        )?;
+
+        let connecion = &mut ctx.accounts.connection;
+        connecion.connected = true;
+
+        let acceptor = &mut ctx.accounts.acceptor;
+        acceptor.req_checked_count += 1;
+
+        Ok(())
+    }
+
+    // region:   --- Accept Connection Function
+
+    // @TODO
+    // reject connection
+    // withdraw stake
 }
 
 // region:   --- Create User Instruction
@@ -112,6 +150,38 @@ pub struct RequestConnection<'info> {
 // endregion:   --- Request Connection Instruction
 
 
+// region:   --- Accept Connection Instruction
+
+#[derive(Accounts)]
+pub struct AcceptConnection<'info> {
+    #[account(
+        mut,
+        seeds = [b"connect", signer.key().as_ref(), &acceptor.req_checked_count.to_le_bytes()],
+        bump
+    )]
+    pub connection: Account<'info, Connection>,
+    #[account(mut)]
+    pub signer: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [b"user", signer.key().as_ref()],
+        bump
+    )]
+    pub acceptor: Account<'info, UserInfo>,
+    #[account(
+        mut,
+        seeds = [b"user", connection.requester.key().as_ref()],
+        bump
+    )]
+    pub requester: Account<'info, UserInfo>,
+    #[account(mut)]
+    pub program_account: AccountInfo<'info>,
+    pub system_program: Program<'info, System>
+}
+
+// endregion:   --- Accept Connection Instruction
+
+
 // region:   --- UserInfo Account
 
 #[account]
@@ -146,7 +216,11 @@ pub enum Error {
     #[msg("Invaild or Wrong Acceptor pubkey")]
     InvaildAcceptorPubkey,
     #[msg("Requester and Acceptor accounts cannot be the same.")]
-    SameAccountNotAllowed
+    SameAccountNotAllowed,
+    #[msg("Requester pubkey in UserInfo account is not equal in Connection account")]
+    MissMatchedRequesterPubkey,
+    #[msg("Acceptor pubkey in UserInfo account is not equal in Connection account")]
+    MissMatchedAcceptorPubkey,
 }
 
 // endregion:   --- Error Handling
