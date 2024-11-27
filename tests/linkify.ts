@@ -3,65 +3,329 @@ import { Program } from "@coral-xyz/anchor";
 import { Linkify } from "../target/types/linkify";
 import dotenv from "dotenv";
 import { expect } from "chai";
+import { BN } from "bn.js";
 dotenv.config();
 
-const confirmTx = async (signature: string) => {
-  const latestBlockhash = await anchor
-    .getProvider()
-    .connection
-    .getLatestBlockhash();
+anchor.setProvider(anchor.AnchorProvider.env());
+const program = anchor.workspace.Linkify as Program<Linkify>;
 
-    await anchor.getProvider().connection.confirmTransaction({
-      signature,
-      ...latestBlockhash,
-    }, "confirmed");
-
-    return signature;
-};
+let requesterOne: anchor.web3.Keypair;
+let requesterTwo: anchor.web3.Keypair;
+let acceptor: anchor.web3.Keypair;
 
 describe("linkify", () => {
-  anchor.setProvider(anchor.AnchorProvider.env());
-  const program = anchor.workspace.Linkify as Program<Linkify>;
+  before(async () => {
+    let airdropAmount = (anchor.web3.LAMPORTS_PER_SOL / 10) * 7;
+    const userOnePrvtAcceptor = JSON.parse(process.env.PRIVATE_KEY_USER1!);
+    const userTwoPrvtRequester = JSON.parse(process.env.PRIVATE_KEY_USER2!);
+    const userPrvtAcceptor = JSON.parse(process.env.PRIVATE_KEY_USER3!);
 
-  it("Create user", async () => {
-    // Add your test here.
+    requesterOne = anchor.web3.Keypair.fromSecretKey(
+      Uint8Array.from(userOnePrvtAcceptor)
+    );
+    requesterTwo = anchor.web3.Keypair.fromSecretKey(
+      Uint8Array.from(userTwoPrvtRequester)
+    );
+    acceptor = anchor.web3.Keypair.fromSecretKey(
+      Uint8Array.from(userPrvtAcceptor)
+    );
 
-    const user_prvt = JSON.parse(process.env.PRIVATE_KEY_USER1!);
-    const user_1 = anchor.web3.Keypair.fromSecretKey(Uint8Array.from(user_prvt));
-    const user_1_name = "krsnax";
-      
-    const [userAccount, _bump] = anchor.web3.PublicKey.findProgramAddressSync([
-        Buffer.from("user"), 
-        user_1.publicKey.toBuffer(),
+    await requestAirdrop(requesterOne.publicKey, airdropAmount);
+    await requestAirdrop(requesterTwo.publicKey, airdropAmount);
+    await requestAirdrop(acceptor.publicKey, airdropAmount);
+
+    await createUser(requesterOne, "requesterOne");
+    await createUser(requesterTwo, "requesterTwo");
+    await createUser(acceptor, "acceptor");
+  });
+
+  const confirmTx = async (signature: string) => {
+    const latestBlockhash = await anchor
+      .getProvider()
+      .connection.getLatestBlockhash();
+
+    await anchor.getProvider().connection.confirmTransaction({
+        signature,
+        ...latestBlockhash,
+      },
+      "confirmed"
+    );
+
+    return signature;
+  };
+
+  const requestAirdrop = async (
+    publicKey: anchor.web3.PublicKey,
+    amount: number
+  ) => {
+    try {
+      const user_balance = await anchor
+        .getProvider()
+        .connection.getBalance(publicKey);
+
+      if (user_balance <= anchor.web3.LAMPORTS_PER_SOL / 2) {
+        const signature = await anchor
+          .getProvider()
+          .connection
+          .requestAirdrop(publicKey, amount);
+        return await confirmTx(signature);
+      } else {
+        console.log(`User ${publicKey}: doesn't required airdrop`);
+      }
+    } catch (error) {
+      console.error("Error requesting airdrop:", error);
+      throw error;
+    }
+  };
+
+  const createUser = async (user: anchor.web3.Keypair, username: string) => {
+    const [userAccount] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("user"), user.publicKey.toBuffer()],
+      program.programId
+    );
+
+    let userAccountInfo = await program.provider.connection.getAccountInfo(
+      userAccount
+    );
+    if (userAccountInfo == null) {
+      await program.methods
+        .createUser(username)
+        .accounts({
+          //@ts-ignore
+          user: userAccount,
+          signer: user.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([user])
+        .rpc()
+        .then(confirmTx);
+    } else {
+      console.log(`User ${username}: already exists`);
+    }
+  };
+
+  const getAccountAddress = async (user: anchor.web3.Keypair) => {
+    return anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("user"), user.publicKey.toBuffer()],
+      program.programId
+    )[0];
+  };
+
+  const logPDA = (seeds: Buffer[], programId: anchor.web3.PublicKey) => {
+    const [pda, bump] = anchor.web3.PublicKey.findProgramAddressSync(
+      seeds,
+      programId
+    );
+    console.log(`PDA: ${pda.toBase58()}, Bump: ${bump}`);
+  };
+
+  it("UserOne requesting connection with Acceptor", async () => {
+    const acceptorPubKey = acceptor.publicKey;
+    const [connectionAccount, bump] =
+      anchor.web3.PublicKey.findProgramAddressSync([
+          Buffer.from("connect"),
+          acceptor.publicKey.toBuffer(),
+          new BN(0).toArrayLike(Buffer, "le", 4),
+        ],
+        program.programId
+      );
+
+    logPDA([
+        Buffer.from("connect"),
+        acceptor.publicKey.toBuffer(),
+        new BN(0).toArrayLike(Buffer, "le", 4),
       ],
       program.programId
     );
-    
-    console.log("Derived User Account:", userAccount.toBase58());
-    console.log("Program ID:", program.programId.toBase58());
-    console.log("User Public Key:", user_1.publicKey.toBase58());
 
     const tx = await program.methods
-      .createUser(user_1_name)
-      .accounts({
-        // @ts-ignore
-        // getting error: Object literal may only specify known properties, and 'user' does not exist in type
-        // Error: AnchorError caused by account: user. Error Code: AccountDidNotDeserialize. Error Number: 3003. Error Message: Failed to deserialize the account.
-        user: userAccount,
-        signer: user_1.publicKey,
+      .requestConnection(acceptorPubKey)
+      .accountsPartial({
+        connection: connectionAccount,
+        signer: requesterOne.publicKey,
+        requesterAcc: await getAccountAddress(requesterOne),
+        acceptorAcc: await getAccountAddress(acceptor),
         systemProgram: anchor.web3.SystemProgram.programId,
       })
-      .signers([user_1])
+      .signers([requesterOne])
       .rpc()
-      .then(confirmTx); 
+      .then(confirmTx);
 
-    console.log("Transaction signature:", tx);
+    console.log("Request connection transaction signature:", tx);
 
-    const account = await program.account.userInfo.fetch(userAccount);
+    const connection = await program.account.connection.fetch(
+      connectionAccount
+    );
+    expect(connection.areConnected).to.be.false;
+    expect(connection.requester.equals(requesterOne.publicKey)).to.be.true;
+    expect(connection.acceptor.equals(acceptorPubKey)).to.be.true;
+  });
 
-    expect(account.name).to.equal(user_1_name);
-    expect(account.userPubkey.equals(user_1.publicKey)).to.be.true;
-    expect(account.reqSentCount).to.equal(0);
-    expect(account.reqReceivedCount).to.equal(0);
+  it("UserTwo requesting connection with Acceptor", async () => {
+    const acceptorPubKey = acceptor.publicKey;
+    const [connectionAccount, bump] =
+      anchor.web3.PublicKey.findProgramAddressSync([
+          Buffer.from("connect"),
+          acceptor.publicKey.toBuffer(),
+          new BN(1).toArrayLike(Buffer, "le", 4),
+        ],
+        program.programId
+      );
+
+    logPDA([
+        Buffer.from("connect"),
+        acceptor.publicKey.toBuffer(),
+        new BN(1).toArrayLike(Buffer, "le", 4),
+      ],
+      program.programId
+    );
+
+    const tx = await program.methods
+      .requestConnection(acceptorPubKey)
+      .accountsPartial({
+        connection: connectionAccount,
+        signer: requesterTwo.publicKey,
+        requesterAcc: await getAccountAddress(requesterTwo),
+        acceptorAcc: await getAccountAddress(acceptor),
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([requesterTwo])
+      .rpc()
+      .then(confirmTx);
+
+    console.log("Request connection transaction signature:", tx);
+
+    const connection = await program.account.connection.fetch(
+      connectionAccount
+    );
+    expect(connection.areConnected).to.be.false;
+    expect(connection.requester.equals(requesterTwo.publicKey)).to.be.true;
+    expect(connection.acceptor.equals(acceptorPubKey)).to.be.true;
+  });
+
+  it("Accepting UserOne connection with UserOne", async () => {
+    const requesterPubKey = requesterOne.publicKey;
+    const [connectionAccount, bump] =
+      anchor.web3.PublicKey.findProgramAddressSync([
+          Buffer.from("connect"),
+          acceptor.publicKey.toBuffer(),
+          new BN(0).toArrayLike(Buffer, "le", 4),
+        ],
+        program.programId
+      );
+
+    logPDA([
+        Buffer.from("connect"),
+        acceptor.publicKey.toBuffer(),
+        new BN(0).toArrayLike(Buffer, "le", 4),
+      ],
+      program.programId
+    );
+
+    const tx = await program.methods
+      .acceptConnection(requesterPubKey)
+      .accounts({
+        //@ts-ignore
+        connection: connectionAccount,
+        signer: acceptor.publicKey,
+        acceptorAcc: await getAccountAddress(acceptor),
+        requesterAcc: await getAccountAddress(requesterOne),
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .signers([acceptor])
+      .rpc()
+      .then(confirmTx);
+
+    console.log("Accept connection transaction signature:", tx);
+
+    const connection = await program.account.connection.fetch(
+      connectionAccount
+    );
+    expect(connection.areConnected).to.be.true;
+  });
+
+  it("Rejecting UserTwo connection", async () => {
+    const [connectionAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync([
+        Buffer.from("connect"),
+        acceptor.publicKey.toBuffer(),
+        new BN(1).toArrayLike(Buffer, "le", 4),
+      ],
+      program.programId
+    );
+
+    logPDA([
+        Buffer.from("connect"),
+        acceptor.publicKey.toBuffer(),
+        new BN(1).toArrayLike(Buffer, "le", 4),
+      ],
+      program.programId
+    );
+
+    const expectedRequesterAcc = await getAccountAddress(requesterTwo);
+    console.log(
+      "Expected requester_acc address:",
+      expectedRequesterAcc.toBase58()
+    );
+
+    const tx = await program.methods
+      .rejectConnection(acceptor.publicKey)
+      .accounts({
+        //@ts-ignore
+        connection: connectionAccount,
+        signer: acceptor.publicKey,
+        denialistAcc: await getAccountAddress(acceptor),
+        requesterAcc: expectedRequesterAcc,
+        requesterPubkey: requesterTwo.publicKey,
+      })
+      .signers([acceptor])
+      .rpc()
+      .then(confirmTx);
+
+    console.log("Reject connection transaction signature:", tx);
+
+    // Verify that the connection account is closed
+    try {
+      await program.account.connection.fetch(connectionAccount);
+      expect.fail("Connection account should be closed after rejection.");
+    } catch (error) {
+      expect(error.message).to.contain("Account does not exist or has no data");
+    }
+  });
+
+  it("Withdrawing SOL stake from Acceptor", async () => {
+    const [connectionAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync([
+          Buffer.from("connect"),
+          acceptor.publicKey.toBuffer(),
+          new BN(0).toArrayLike(Buffer, "le", 4),
+        ],
+        program.programId
+      );
+
+    const tx = await program.methods
+      .withdrawStake(acceptor.publicKey)
+      .accounts({
+        //@ts-ignore
+        connection: connectionAccount,
+        acceptorAcc: await getAccountAddress(acceptor),
+        requesterAcc: await getAccountAddress(requesterOne),
+        signer: acceptor.publicKey,
+        requesterPubkey: requesterOne.publicKey,
+        acceptorPubkey: acceptor.publicKey,
+      })
+      .signers([acceptor])
+      .rpc()
+      .then(confirmTx);
+
+    console.log("Withdraw stake transaction signature:", tx);
+
+    // Verify that the connection account is closed
+    try {
+      await program.account.connection.fetch(connectionAccount);
+      expect.fail(
+        "Connection account should be closed after stake withdrawal."
+      );
+    } catch (error) {
+      expect(error.message).to.contain("Account does not exist or has no data");
+    }
   });
 });
