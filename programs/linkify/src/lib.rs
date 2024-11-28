@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::native_token::LAMPORTS_PER_SOL;
 
-declare_id!("GZWBJp4oydN6d17NuHaDYVmJhQwhAAbdKStgPh64vr1r");
+declare_id!("HQV5PRztxQFWBUxafMEsQwZJv1yBoDEgBn51FsnkDb5N");
 
 #[program]
 pub mod linkify {
@@ -15,8 +15,6 @@ pub mod linkify {
         user_info.user_pubkey = ctx.accounts.signer.key();
         user_info.req_received_count = 0;
         user_info.req_checked_count = 0;
-        user_info.staked_count = 0;
-        user_info.unstaked_count = 0;
 
         Ok(())
     }
@@ -65,10 +63,12 @@ pub mod linkify {
                 ctx.accounts.connection.to_account_info(),
             ],
         )?;
-
+        
+        let connection_tracker = ctx.accounts.acceptor_acc.req_received_count;
         let connection = &mut ctx.accounts.connection;
         connection.requester = *requester_key;
         connection.acceptor = *acceptor_key;
+        connection.connection_tracker = connection_tracker;
         connection.are_connected = false;
 
         let acceptor = &mut ctx.accounts.acceptor_acc;
@@ -115,9 +115,6 @@ pub mod linkify {
         let acceptor = &mut ctx.accounts.acceptor_acc;
         acceptor.req_checked_count += 1;
 
-        let requester = &mut ctx.accounts.requester_acc;
-        requester.staked_count += 1;
-
         Ok(())
     }
 
@@ -125,27 +122,25 @@ pub mod linkify {
   
     // region:   --- Reject Connection Function
 
-    pub fn reject_connection(ctx: Context<RejectConnection>, denialist_pubkey: Pubkey) -> Result<()> {
+    pub fn reject_connection(ctx: Context<RejectConnection>, requester_pubkey: Pubkey) -> Result<()> {
         let denialist_connection = &ctx.accounts.connection.acceptor;
         let requester_connection = &ctx.accounts.connection.requester;
-        let denialist_key = &ctx.accounts.denialist_acc.user_pubkey;
+        let rejector_key = &ctx.accounts.rejector_acc.user_pubkey;
         let requester_key = &ctx.accounts.requester_acc.user_pubkey;
 
-        require!(denialist_connection == denialist_key, Error::IncorrectAcceptorPubkey);
+        require!(denialist_connection == rejector_key, Error::IncorrectAcceptorPubkey);
         require!(requester_connection == requester_key, Error::IncorrectRequesterPubkey);
-        require!(denialist_key == &denialist_pubkey, Error::IncorrectRejectorPubkey);
-        require!(denialist_key != requester_key, Error::SameAccountNotAllowed);
+        require!(requester_key == &requester_pubkey, Error::IncorrectRejectorPubkey);
+        require!(rejector_key != requester_key, Error::SameAccountNotAllowed);
 
         let connection_acc = &ctx.accounts.connection;
 
         connection_acc.sub_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
         ctx.accounts.requester_pubkey.add_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
 
-        let denialist = &mut ctx.accounts.denialist_acc;
-        denialist.req_checked_count += 1;
+        let rejector = &mut ctx.accounts.rejector_acc;
 
-        let requester = &mut ctx.accounts.requester_acc;
-        requester.unstaked_count += 1;
+        rejector.req_checked_count += 1;
 
         Ok(())
     }
@@ -168,8 +163,6 @@ pub mod linkify {
         ctx.accounts.requester_pubkey.add_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
         ctx.accounts.acceptor_pubkey.add_lamports(LAMPORTS_PER_SOL / 10 * 2)?;
 
-        let unstaking_count = &mut ctx.accounts.requester_acc.unstaked_count;
-        *unstaking_count += 1;
         Ok(())
     }
 
@@ -223,7 +216,7 @@ pub struct RequestConnection<'info> {
     #[account(
         init,
         payer = signer,
-        space = 8 + 32 + 32 + 1,
+        space = 8 + 32 + 32 + 4 + 1,
         seeds = [b"connect", acceptor_acc.user_pubkey.key().as_ref(), &acceptor_acc.req_received_count.to_le_bytes()],
         bump
     )]
@@ -287,7 +280,7 @@ pub struct RejectConnection<'info> {
     #[account(
         mut,
         close = requester_pubkey,
-        seeds = [b"connect", signer.key().as_ref(), &denialist_acc.req_checked_count.to_le_bytes()],
+        seeds = [b"connect", signer.key().as_ref(), &rejector_acc.req_checked_count.to_le_bytes()],
         bump
     )]
     pub connection: Account<'info, Connection>,
@@ -297,7 +290,7 @@ pub struct RejectConnection<'info> {
         seeds = [b"user", signer.key().as_ref()],
         bump
     )]
-    pub denialist_acc: Account<'info, UserInfo>,
+    pub rejector_acc: Account<'info, UserInfo>,
     #[account(
         mut,
         seeds = [b"user", connection.requester.key().as_ref()],
@@ -353,7 +346,7 @@ pub struct WithdrawStake<'info> {
         mut,
         close = signer,
         // constraint =  acceptor_acc.user_pubkey.key() == signer.key() || requester_acc.user_pubkey.key() == signer.key(),
-        seeds = [b"connect", acceptor_acc.user_pubkey.key().as_ref(), &requester_acc.unstaked_count.to_le_bytes()],
+        seeds = [b"connect", acceptor_acc.user_pubkey.key().as_ref(), &connection.connection_tracker.to_le_bytes()],
         bump
     )]
     pub connection: Account<'info, Connection>,
@@ -392,8 +385,6 @@ pub struct UserInfo {
     pub username: String,
     pub req_received_count: u32,
     pub req_checked_count: u32,
-    pub staked_count: u32,
-    pub unstaked_count: u32,
 }
 
 // endregion:   --- UserInfo Account
@@ -405,6 +396,7 @@ pub struct UserInfo {
 pub struct Connection {
     pub requester: Pubkey,
     pub acceptor: Pubkey,
+    pub connection_tracker: u32,
     pub are_connected: bool,
 }
 
