@@ -70,7 +70,7 @@ describe("linkify", () => {
           .requestAirdrop(publicKey, amount);
         return await confirmTx(signature);
       } else {
-        console.log(`User ${publicKey}: doesn't required airdrop`);
+        console.log(`User wallet: ${publicKey}, balance: ${user_balance}`);
       }
     } catch (error) {
       console.error("Error requesting airdrop:", error);
@@ -119,13 +119,16 @@ describe("linkify", () => {
     console.log(`PDA: ${pda.toBase58()}, Bump: ${bump}`);
   };
 
-  it("UserOne requesting connection with Acceptor", async () => {
+  let reqReceivedCount = 0;
+  let reqCheckCount = 0;
+
+  it("UserOne requested Acceptor and UserOne staked 0.2 Sol", async () => {
     const acceptorPubKey = acceptor.publicKey;
     const [connectionAccount, bump] =
       anchor.web3.PublicKey.findProgramAddressSync([
           Buffer.from("connect"),
           acceptor.publicKey.toBuffer(),
-          new BN(0).toArrayLike(Buffer, "le", 4),
+          new BN(reqReceivedCount).toArrayLike(Buffer, "le", 4),
         ],
         program.programId
       );
@@ -133,7 +136,7 @@ describe("linkify", () => {
     logPDA([
         Buffer.from("connect"),
         acceptor.publicKey.toBuffer(),
-        new BN(0).toArrayLike(Buffer, "le", 4),
+        new BN(reqReceivedCount).toArrayLike(Buffer, "le", 4),
       ],
       program.programId
     );
@@ -156,18 +159,22 @@ describe("linkify", () => {
     const connection = await program.account.connection.fetch(
       connectionAccount
     );
+
+    // console.log(`UserOne request's Acceptor: ${connection}`);
     expect(connection.areConnected).to.be.false;
     expect(connection.requester.equals(requesterOne.publicKey)).to.be.true;
     expect(connection.acceptor.equals(acceptorPubKey)).to.be.true;
+    expect(connection.connectionTracker).to.equal(reqReceivedCount);
+    reqReceivedCount++;
   });
 
-  it("UserTwo requesting connection with Acceptor", async () => {
+  it("UserTwo requested Acceptor and UserTwo staked 0.2 Sol", async () => {
     const acceptorPubKey = acceptor.publicKey;
     const [connectionAccount, bump] =
       anchor.web3.PublicKey.findProgramAddressSync([
           Buffer.from("connect"),
           acceptor.publicKey.toBuffer(),
-          new BN(1).toArrayLike(Buffer, "le", 4),
+          new BN(reqReceivedCount).toArrayLike(Buffer, "le", 4),
         ],
         program.programId
       );
@@ -175,7 +182,7 @@ describe("linkify", () => {
     logPDA([
         Buffer.from("connect"),
         acceptor.publicKey.toBuffer(),
-        new BN(1).toArrayLike(Buffer, "le", 4),
+        new BN(reqReceivedCount).toArrayLike(Buffer, "le", 4),
       ],
       program.programId
     );
@@ -198,18 +205,21 @@ describe("linkify", () => {
     const connection = await program.account.connection.fetch(
       connectionAccount
     );
+    // console.log(`UserTwo request's Acceptor: ${connection}`);
     expect(connection.areConnected).to.be.false;
     expect(connection.requester.equals(requesterTwo.publicKey)).to.be.true;
     expect(connection.acceptor.equals(acceptorPubKey)).to.be.true;
+    expect(connection.connectionTracker).to.equal(reqReceivedCount);
+    reqReceivedCount++;
   });
 
-  it("Accepting UserOne connection with UserOne", async () => {
+  it("Acceptor Accepting UserOne, Both staked 0.4 Sol", async () => {
     const requesterPubKey = requesterOne.publicKey;
     const [connectionAccount, bump] =
       anchor.web3.PublicKey.findProgramAddressSync([
           Buffer.from("connect"),
           acceptor.publicKey.toBuffer(),
-          new BN(0).toArrayLike(Buffer, "le", 4),
+          new BN(reqCheckCount).toArrayLike(Buffer, "le", 4),
         ],
         program.programId
       );
@@ -217,7 +227,7 @@ describe("linkify", () => {
     logPDA([
         Buffer.from("connect"),
         acceptor.publicKey.toBuffer(),
-        new BN(0).toArrayLike(Buffer, "le", 4),
+        new BN(reqCheckCount).toArrayLike(Buffer, "le", 4),
       ],
       program.programId
     );
@@ -241,41 +251,47 @@ describe("linkify", () => {
     const connection = await program.account.connection.fetch(
       connectionAccount
     );
+    // console.log(`Acceptor accepts UserOne: ${connection}`);
     expect(connection.areConnected).to.be.true;
+    expect(connection.connectionTracker).to.equal(reqCheckCount);
+    reqCheckCount++;
   });
 
-  it("Rejecting UserTwo connection", async () => {
-    const [connectionAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync([
+  it("Acceptor Rejecting UserTwo, UserTwo gets 0.2 staked Sol", async () => {
+    // Use the correct index for this connection, which was the last one created with `reqReceivedCount`
+    const [connectionAccount, bump] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("connect"),
+          acceptor.publicKey.toBuffer(),
+          new BN(1).toArrayLike(Buffer, "le", 4), // Use the last received connection
+        ],
+        program.programId
+      );
+
+    logPDA(
+      [
         Buffer.from("connect"),
         acceptor.publicKey.toBuffer(),
-        new BN(1).toArrayLike(Buffer, "le", 4),
+        new BN(reqReceivedCount - 1).toArrayLike(Buffer, "le", 4),
       ],
       program.programId
     );
 
-    logPDA([
-        Buffer.from("connect"),
-        acceptor.publicKey.toBuffer(),
-        new BN(1).toArrayLike(Buffer, "le", 4),
-      ],
-      program.programId
+    const connectionX = await program.account.connection.fetch(
+      connectionAccount
     );
-
-    const expectedRequesterAcc = await getAccountAddress(requesterTwo);
-    console.log(
-      "Expected requester_acc address:",
-      expectedRequesterAcc.toBase58()
-    );
+    console.log(`Connection before rejection: ${connectionX.connectionTracker}`); 
 
     const tx = await program.methods
-      .rejectConnection(acceptor.publicKey)
+      .rejectConnection(requesterTwo.publicKey) // Pass the correct requester's pubkey here
       .accounts({
         //@ts-ignore
         connection: connectionAccount,
         signer: acceptor.publicKey,
-        denialistAcc: await getAccountAddress(acceptor),
-        requesterAcc: expectedRequesterAcc,
-        requesterPubkey: requesterTwo.publicKey,
+        rejector_acc: await getAccountAddress(acceptor),
+        requester_acc: await getAccountAddress(requesterTwo),
+        requester_pubkey: requesterTwo.publicKey,
       })
       .signers([acceptor])
       .rpc()
@@ -285,14 +301,17 @@ describe("linkify", () => {
 
     // Verify that the connection account is closed
     try {
-      await program.account.connection.fetch(connectionAccount);
+      let connection = await program.account.connection.fetch(
+        connectionAccount
+      );
+      console.log(`Acceptor rejects UserTwo: ${connection}`);
       expect.fail("Connection account should be closed after rejection.");
     } catch (error) {
       expect(error.message).to.contain("Account does not exist or has no data");
     }
   });
 
-  it("Withdrawing SOL stake from Acceptor", async () => {
+  it("Unstaking 0.4 SOL and transfering back to Acceptor & Requester", async () => {
     const [connectionAccount, bump] = anchor.web3.PublicKey.findProgramAddressSync([
           Buffer.from("connect"),
           acceptor.publicKey.toBuffer(),
@@ -320,7 +339,8 @@ describe("linkify", () => {
 
     // Verify that the connection account is closed
     try {
-      await program.account.connection.fetch(connectionAccount);
+      let connection = await program.account.connection.fetch(connectionAccount);
+      console.log(`Acceptor & UserOne unstaked Sol: ${connection}`);
       expect.fail(
         "Connection account should be closed after stake withdrawal."
       );
